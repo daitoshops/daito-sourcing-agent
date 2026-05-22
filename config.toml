@@ -1,0 +1,20 @@
+[business]
+dolar_ars = 1400
+iibb_pct = 4.5
+taxes_us_pct = 7
+ml_max_price_ars = 680000
+ml_commission_juguetes_pct = 15
+ml_shipping_ars = 8170
+ml_installments_cost_pct = 12.3
+daitoshops_shipping_ars = 10000
+daitoshops_discount_vs_competition_pct = 2
+daitoshops_iibb_pct = 4.5
+
+[importers.veronica]
+tarifa_kg = 38
+fee_per_envio = 4
+max_weight_kg = 1.5
+
+[importers.gonzalo]
+tarifa_kg = 40
+fee_per_envio = 0

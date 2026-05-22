@@ -1,0 +1,16 @@
+# Configuración de despliegue para Render.com
+# Render lee este archivo automáticamente al crear el servicio.
+services:
+  - type: web
+    name: daito-sourcing-agent
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      # Estos secrets se cargan a mano desde el dashboard de Render.
+      # sync: false significa "no los versionamos, los completa el humano".
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: DAITO_API_TOKEN
+        sync: false

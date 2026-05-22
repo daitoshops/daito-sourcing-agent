@@ -1,0 +1,25 @@
+# Artefactos de Python
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+
+# Variables sensibles y entornos virtuales (NUNCA al contenedor)
+.env
+.venv
+venv/
+
+# Git
+.git
+.gitignore
+
+# Docs y resultados locales que no van a producción
+DEPLOYMENT.md
+README.md
+resultados/
+*.json
+
+# Editores
+.vscode/
+.idea/
+.DS_Store

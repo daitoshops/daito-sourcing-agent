@@ -1,0 +1,10 @@
+anthropic>=0.30
+requests>=2.31
+beautifulsoup4>=4.12
+python-dotenv>=1.0
+tomli>=2.0; python_version<"3.11"
+
+# Server HTTP (FastAPI + Uvicorn) para el endpoint /analyze
+fastapi>=0.110
+uvicorn[standard]>=0.27
+python-multipart>=0.0.9
