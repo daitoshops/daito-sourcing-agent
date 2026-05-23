@@ -14,17 +14,37 @@ from typing import Optional
 
 from .models import LegoIdentification
 
-# Modelo por defecto: Haiku para velocidad y costo.
-# Si querés más precisión, cambiar a "claude-sonnet-4-5".
-DEFAULT_MODEL = "claude-haiku-4-5"
+# Modelo por defecto: Sonnet 4.6 — mucho mejor leyendo números de set en cajas LEGO.
+# ~3-4x más caro que Haiku (~$0.01/análisis) pero vale la pena para sourcing real.
+# Si necesitás bajar costo y aceptás peor precisión, cambiar a "claude-haiku-4-5".
+DEFAULT_MODEL = "claude-sonnet-4-6"
 
-# Prompt para identificar el set. Devuelve JSON estricto.
+# Prompt para identificar el set LEGO.
+# Estrategia: forzar a Claude a LEER el set number de la caja, no adivinar por similitud visual.
+# Muchos sets LEGO se parecen visualmente; solo el número los identifica de forma única.
 IDENTIFY_PROMPT = (
-    "Identify this LEGO set. Return JSON: "
-    '{set_number: "NNNNN", theme: "...", name: "...", pieces: N, '
-    "age_min: N, retail_usd: N or null, confidence: 0-100}. "
-    'If not a LEGO, return {is_lego: false}. '
-    "Respond ONLY with valid JSON, no markdown, no commentary."
+    "Identify this LEGO set. Your task is to read the set number printed on the box.\n\n"
+    "CRITICAL RULES:\n"
+    "1. Look for a 4-5 digit number on the box (usually top-right corner, sometimes bottom). "
+    "Examples: '42211', '10295', '75423'.\n"
+    "2. If you can SEE the number clearly, return it exactly. Set confidence >= 80.\n"
+    "3. If you CANNOT read the number, DO NOT guess based on similar-looking sets. "
+    "Return set_number: null and confidence < 50.\n"
+    "4. Many LEGO sets look very similar (Technic rovers, Icons cars, Star Wars ships). "
+    "Visual similarity is NOT enough — only the number is definitive.\n"
+    "5. Look also at: pieces count printed on box, age (10+, 18+), product name on box.\n\n"
+    "Return JSON ONLY (no markdown, no comments):\n"
+    "{\n"
+    '  "set_number": "NNNNN" or null,\n'
+    '  "name": "exact name from box",\n'
+    '  "theme": "Technic | Icons | Star Wars | City | Creator | Friends | etc",\n'
+    '  "pieces": N or null,\n'
+    '  "age_min": N or null,\n'
+    '  "retail_usd": N or null,\n'
+    '  "confidence": 0-100 (be honest about how clearly you read the set number)\n'
+    "}\n\n"
+    "If the image is not a LEGO product, return: {\"is_lego\": false}.\n"
+    "Respond ONLY with valid JSON, no other text."
 )
 
 
@@ -68,11 +88,15 @@ def identify_from_image_bytes(
     img_bytes: bytes,
     media_type: str = "image/jpeg",
     model: str = DEFAULT_MODEL,
+    extra_context: Optional[str] = None,
 ) -> LegoIdentification:
     """
     Identifica un set LEGO directamente desde bytes de imagen en memoria.
     Útil para el endpoint HTTP donde recibimos el archivo en base64 o por URL,
     sin necesidad de escribir a disco.
+
+    extra_context: texto adicional para darle más contexto a Claude.
+    Por ejemplo, el título del listing de Amazon (que suele incluir el set number).
     """
     try:
         from anthropic import Anthropic
@@ -88,6 +112,18 @@ def identify_from_image_bytes(
         )
 
     b64 = base64.standard_b64encode(img_bytes).decode("ascii")
+
+    # Si tenemos contexto extra (e.g. título del listing), lo agregamos AL PRINCIPIO del prompt.
+    # Esto le da a Claude info adicional que muchas veces incluye el set number directo en texto.
+    prompt_with_context = IDENTIFY_PROMPT
+    if extra_context:
+        prompt_with_context = (
+            "ADDITIONAL CONTEXT (use this to confirm your identification):\n"
+            f"{extra_context}\n\n"
+            "If the context above contains the LEGO set number (like '42211', '10295', '75423') "
+            "and matches what you see in the image, use it confidently with high confidence (>= 90).\n\n"
+            + IDENTIFY_PROMPT
+        )
 
     client = Anthropic(api_key=api_key)
     response = client.messages.create(
@@ -105,7 +141,7 @@ def identify_from_image_bytes(
                             "data": b64,
                         },
                     },
-                    {"type": "text", "text": IDENTIFY_PROMPT},
+                    {"type": "text", "text": prompt_with_context},
                 ],
             }
         ],
@@ -182,17 +218,30 @@ def identify_from_url(url: str, model: str = DEFAULT_MODEL) -> LegoIdentificatio
         if ogt and ogt.get("content"):
             title = ogt["content"]
 
-    # Si encontré una imagen, la descargo y la mando a Claude
+    # Si encontré una imagen, la descargo y la mando a Claude JUNTO CON EL TÍTULO del listing.
+    # Esto es clave: el título del listing suele tener el set number ("LEGO 75423 X-Wing...")
+    # y Claude lo puede combinar con la imagen visual para identificar con alta confianza.
     if img_url:
         try:
             img_resp = requests.get(img_url, headers=headers, timeout=20)
             img_resp.raise_for_status()
-            # Guardo a temp para reusar identify_from_image
-            import tempfile
-            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
-                tmp.write(img_resp.content)
-                tmp_path = tmp.name
-            ident = identify_from_image(tmp_path, model=model)
+            img_bytes = img_resp.content
+            # Inferir media_type del Content-Type o de la extensión de la URL
+            ctype = (img_resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
+            if ctype.startswith("image/"):
+                media_type = ctype
+            else:
+                media_type = "image/jpeg"
+            # Armar contexto extra con title + URL para que Claude tenga toda la info
+            extra_context = None
+            if title:
+                extra_context = f"Product listing title: '{title}'\nProduct page URL: {url}"
+            ident = identify_from_image_bytes(
+                img_bytes,
+                media_type=media_type,
+                model=model,
+                extra_context=extra_context,
+            )
             ident.image_url = img_url
             return ident
         except Exception as e:
