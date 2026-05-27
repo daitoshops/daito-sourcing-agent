@@ -88,15 +88,11 @@ def identify_from_image_bytes(
     img_bytes: bytes,
     media_type: str = "image/jpeg",
     model: str = DEFAULT_MODEL,
-    extra_context: Optional[str] = None,
 ) -> LegoIdentification:
     """
     Identifica un set LEGO directamente desde bytes de imagen en memoria.
     Útil para el endpoint HTTP donde recibimos el archivo en base64 o por URL,
     sin necesidad de escribir a disco.
-
-    extra_context: texto adicional para darle más contexto a Claude.
-    Por ejemplo, el título del listing de Amazon (que suele incluir el set number).
     """
     try:
         from anthropic import Anthropic
@@ -112,18 +108,6 @@ def identify_from_image_bytes(
         )
 
     b64 = base64.standard_b64encode(img_bytes).decode("ascii")
-
-    # Si tenemos contexto extra (e.g. título del listing), lo agregamos AL PRINCIPIO del prompt.
-    # Esto le da a Claude info adicional que muchas veces incluye el set number directo en texto.
-    prompt_with_context = IDENTIFY_PROMPT
-    if extra_context:
-        prompt_with_context = (
-            "ADDITIONAL CONTEXT (use this to confirm your identification):\n"
-            f"{extra_context}\n\n"
-            "If the context above contains the LEGO set number (like '42211', '10295', '75423') "
-            "and matches what you see in the image, use it confidently with high confidence (>= 90).\n\n"
-            + IDENTIFY_PROMPT
-        )
 
     client = Anthropic(api_key=api_key)
     response = client.messages.create(
@@ -141,7 +125,7 @@ def identify_from_image_bytes(
                             "data": b64,
                         },
                     },
-                    {"type": "text", "text": prompt_with_context},
+                    {"type": "text", "text": IDENTIFY_PROMPT},
                 ],
             }
         ],
@@ -218,30 +202,17 @@ def identify_from_url(url: str, model: str = DEFAULT_MODEL) -> LegoIdentificatio
         if ogt and ogt.get("content"):
             title = ogt["content"]
 
-    # Si encontré una imagen, la descargo y la mando a Claude JUNTO CON EL TÍTULO del listing.
-    # Esto es clave: el título del listing suele tener el set number ("LEGO 75423 X-Wing...")
-    # y Claude lo puede combinar con la imagen visual para identificar con alta confianza.
+    # Si encontré una imagen, la descargo y la mando a Claude
     if img_url:
         try:
             img_resp = requests.get(img_url, headers=headers, timeout=20)
             img_resp.raise_for_status()
-            img_bytes = img_resp.content
-            # Inferir media_type del Content-Type o de la extensión de la URL
-            ctype = (img_resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
-            if ctype.startswith("image/"):
-                media_type = ctype
-            else:
-                media_type = "image/jpeg"
-            # Armar contexto extra con title + URL para que Claude tenga toda la info
-            extra_context = None
-            if title:
-                extra_context = f"Product listing title: '{title}'\nProduct page URL: {url}"
-            ident = identify_from_image_bytes(
-                img_bytes,
-                media_type=media_type,
-                model=model,
-                extra_context=extra_context,
-            )
+            # Guardo a temp para reusar identify_from_image
+            import tempfile
+            with tempfile.NamedTemporaryFile(suffix=".jpg", delete=False) as tmp:
+                tmp.write(img_resp.content)
+                tmp_path = tmp.name
+            ident = identify_from_image(tmp_path, model=model)
             ident.image_url = img_url
             return ident
         except Exception as e:
